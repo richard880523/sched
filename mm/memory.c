@@ -2743,6 +2743,7 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 	int exclusive = 0;
 	vm_fault_t ret = 0;
 
+	// trace_printk("Do swap page !\n");
 	if (!pte_unmap_same(vma->vm_mm, vmf->pmd, vmf->pte, vmf->orig_pte))
 		goto out;
 
@@ -2768,6 +2769,59 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 	page = lookup_swap_cache(entry, vma, vmf->address);
 	swapcache = page;
 
+	if (page) {
+		// trace_printk("Page is found in page cache\n");
+		struct anon_vma *anon_vma;
+		struct anon_vma_chain *avc;
+		pgoff_t pgoff_start, pgoff_end;
+
+		/*
+		 * Place the page into reconstruct list maintain by per-process.
+		 */
+		anon_vma = page_anon_vma(page); // page_get_anon_vma(page);
+		if (anon_vma) {
+			pgoff_start = page_to_pgoff(page);
+			pgoff_end = pgoff_start + hpage_nr_pages(page) - 1;
+			// anon_vma_lock_read(anon_vma);
+		
+			// trace_printk("Start searching vma address.\n");
+			anon_vma_interval_tree_foreach(avc, &anon_vma->rb_root, pgoff_start, pgoff_end) {
+				struct vm_area_struct *vma = avc->vma;
+				unsigned long address = vma_address(page, vma);
+
+				// Skip if address of the page is not inside vma address
+				if (address < vma->vm_start || address >= vma->vm_end)
+					continue;
+				// trace_printk("Insert pages, address of page: %lu\n", address);
+				
+				/* vm_mm refers to the mm where vma belongs */
+				vma->vm_mm->page_fault_count++;
+				struct recst_list_node *recst_page = kzalloc(sizeof(struct recst_list_node), GFP_KERNEL);
+				recst_page->page = page;
+
+				spin_lock_irqsave(&vma->vm_mm->recst_lock, vma->vm_mm->recst_lock_flags);
+				// TODO
+				/*
+				if (page_check_references(page, )) {
+					// add to p->inactive_list->pg_head;
+				}
+				else {
+					// add to p->reconstruct_list;
+				}
+				*/
+				// trace_printk("%p\n", &vma->vm_mm->recst_list_head);
+				list_add_tail(&recst_page->list, &vma->vm_mm->recst_list_head);
+				/*
+				struct recst_list_node *entry, *n;
+				list_for_each_entry_safe(entry, n, &vma->vm_mm->recst_list_head, list) {
+					trace_printk("address of pages: %p\n", entry->page);
+				}
+				*/
+				spin_unlock_irqrestore(&vma->vm_mm->recst_lock, vma->vm_mm->recst_lock_flags);
+			}
+		}
+	}
+
 	if (!page) {
 		struct swap_info_struct *si = swp_swap_info(entry);
 
@@ -2782,6 +2836,25 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 				set_page_private(page, entry.val);
 				lru_cache_add_anon(page);
 				swap_readpage(page, true);
+
+				struct anon_vma *anon_vma;
+				struct anon_vma_chain *avc;
+				pgoff_t pgoff_start, pgoff_end;
+
+				anon_vma = page_anon_vma(page);
+				if (anon_vma) {
+					pgoff_start = page_to_pgoff(page);
+					pgoff_end = pgoff_start + hpage_nr_pages(page) - 1;
+
+					anon_vma_interval_tree_foreach(avc, &anon_vma->rb_root, pgoff_start, pgoff_end) {
+						struct vm_area_struct *vma = avc->vma;
+						unsigned long address = vma_address(page, vma);
+
+						if (address < vma->vm_start || address >= vma->vm_end)
+							continue;
+						vma->vm_mm->page_fault_count++;
+					}
+				}
 			}
 		} else {
 			page = swapin_readahead(entry, GFP_HIGHUSER_MOVABLE,
