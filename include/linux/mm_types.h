@@ -367,7 +367,33 @@ struct core_state {
 };
 
 struct kioctx_table;
+struct recst_list_node {
+	struct page *page;
+	struct list_head list;
+};
+
 struct mm_struct {
+	/* 
+	 * Records page fault times inside do_swap_page()
+	 * in mm/memory.c file.
+	 */
+	unsigned int page_fault_count;
+
+	/* 
+	 * Spinlock for accessing the recst_list.
+	 */
+	spinlock_t recst_lock;
+	unsigned long recst_lock_flags;
+	struct list_head recst_list_head;
+	// unsigned int page_count;
+
+	/*
+	 * This is a pointer for non-memory intensive process to 
+	 * access the recst_list_head of memory intensive process 
+	 * while execution.  
+	 */
+	struct list_head *prefetch_list_head;
+
 	struct {
 		struct vm_area_struct *mmap;		/* list of VMAs */
 		struct rb_root mm_rb;

@@ -1003,6 +1003,10 @@ static void mm_init_uprobes_state(struct mm_struct *mm)
 static struct mm_struct *mm_init(struct mm_struct *mm, struct task_struct *p,
 	struct user_namespace *user_ns)
 {
+	mm->page_fault_count = 0;
+	spin_lock_init(&mm->recst_lock);
+	INIT_LIST_HEAD(&mm->recst_list_head);
+	mm->prefetch_list_head = NULL;
 	mm->mmap = NULL;
 	mm->mm_rb = RB_ROOT;
 	mm->vmacache_seqnum = 0;

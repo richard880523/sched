@@ -27,6 +27,10 @@
  * and size this cpu_bitmask to NR_CPUS.
  */
 struct mm_struct init_mm = {
+	.page_fault_count = 0,
+	.recst_lock = __SPIN_LOCK_UNLOCKED(init_mm.recst_lock),
+	.recst_list_head = LIST_HEAD_INIT(init_mm.recst_list_head),
+	.prefetch_list_head = NULL,
 	.mm_rb		= RB_ROOT,
 	.pgd		= swapper_pg_dir,
 	.mm_users	= ATOMIC_INIT(2),
