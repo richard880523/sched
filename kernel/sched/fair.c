@@ -25,6 +25,18 @@
 #include <trace/events/sched.h>
 
 /*
+ * Define a postpone queue for memory intensive process
+ * in cfs scheduler using linux/list.h data structure
+ */
+#include <linux/spinlock.h>
+#include <linux/list.h>
+
+DEFINE_SPINLOCK(pq_lock);
+unsigned long pq_lock_flags;
+// unsigned long pq_count;
+struct sched_entity *non_mp_se = NULL;
+
+/*
  * Targeted preemption latency for CPU-bound tasks:
  *
  * NOTE: this latency value is not the same as the concept of
@@ -6750,9 +6762,10 @@ static struct task_struct *
 pick_next_task_fair(struct rq *rq, struct task_struct *prev, struct rq_flags *rf)
 {
 	struct cfs_rq *cfs_rq = &rq->cfs;
-	struct sched_entity *se;
+	struct sched_entity *se, *rightmost;
 	struct task_struct *p;
 	int new_tasks;
+	unsigned int threshold = 0;
 
 again:
 	if (!sched_fair_runnable(rq))
@@ -6836,9 +6849,88 @@ again:
 	goto done;
 simple:
 #endif
-	if (prev)
-		put_prev_task(rq, prev);
+	/*
+	 * Determine whether the 'user process' is memory intensive or not.
+	 * user space task:    task->mm = task->active_mm
+	 * kernel thread task: task->mm = NULL
+	 */
+	if (prev && prev->mm) { // && (prev->policy == SCHED_NORMAL || prev->policy == SCHED_BATCH))
+		// trace_printk("%lu pages\n", get_mm_rss(prev->mm));
+		if (get_mm_rss(prev->mm) < 15000)
+			prev->se.mem_intense = 0;
+		else
+			prev->se.mem_intense = 1;	
+ 	}
+	// trace_printk("%u\n", se->on_rq); -> all 0
+	// trace_printk("%lu\n", p->state); -> 0 or 512
 
+	/*
+	 * Before putting process into cfs red-black tree, we check whether the process 
+	 * is memory intensive or not. For non-memory intensive process, we records 
+	 * them into our postpone queue for later use.
+	 */
+	rightmost = __pick_last_entity(cfs_rq);
+	if (prev) {
+		/*
+		trace_printk("%u\n", prev->policy);
+		if (prev->policy != SCHED_NORMAL && prev->policy != SCHED_BATCH) {
+			trace_printk("It's not cfs se, put the task back immediately.\n");
+			put_prev_task(rq, prev);
+			goto remain;
+		}
+		*/
+		put_prev_task(rq, prev);
+		
+		/* This means that it's a kernel thread/process. */
+		if (!(prev->mm) || (prev->policy != SCHED_NORMAL && prev->policy != SCHED_BATCH)) {
+			// trace_printk("prev->mm is NULL or prev is not a cfs process\n");
+			goto remain;
+		}
+
+		if (!prev->se.mem_intense) { // && (rightmost && rightmost->mem_intense))
+			// trace_printk("Set non-memory intensive process.\n");
+			spin_lock_irqsave(&pq_lock, pq_lock_flags);
+			non_mp_se = &prev->se;
+			spin_unlock_irqrestore(&pq_lock, pq_lock_flags);
+
+			// trace_printk("enq_cfs_rq: %p\n", cfs_rq_of(se));
+			// trace_printk("enq_addr: %p\n", &prev->se);
+		} else {
+			/* For memory intensive process */
+			spin_lock_irqsave(&pq_lock, pq_lock_flags);
+			if (non_mp_se) {
+				struct sched_entity *pse = &prev->se;	
+				dequeue_entity(cfs_rq, pse, DEQUEUE_SLEEP);
+
+				update_curr(cfs_rq);
+				update_load_avg(cfs_rq, pse, UPDATE_TG | DO_ATTACH);
+				update_cfs_group(pse);
+				enqueue_runnable_load_avg(cfs_rq, pse);
+				account_entity_enqueue(cfs_rq, pse);
+
+				check_schedstat_required();
+				update_stats_enqueue(cfs_rq, pse, ENQUEUE_WAKEUP);
+				check_spread(cfs_rq, pse);
+
+				pse->vruntime = non_mp_se->vruntime + 1;
+
+				__enqueue_entity(cfs_rq, pse);
+				pse->on_rq = 1;
+
+				if (cfs_rq->nr_running == 1) {
+					list_add_leaf_cfs_rq(cfs_rq);
+					check_enqueue_throttle(cfs_rq);
+				}
+				// trace_printk("cfs_rq: %p, deq_addr: %p\n", cfs_rq, pq_se);
+				// trace_printk("Reorder memory intensive process.\n");
+
+				/* Set non_mp_se to NULL to avoid two mp entered consecutively. */
+				non_mp_se = NULL;
+			}
+			spin_unlock_irqrestore(&pq_lock, pq_lock_flags);
+		}
+	}
+remain:	
 	do {
 		se = pick_next_entity(cfs_rq, NULL);
 		set_next_entity(cfs_rq, se);
@@ -10507,6 +10599,10 @@ void show_numa_stats(struct task_struct *p, struct seq_file *m)
 
 __init void init_sched_fair_class(void)
 {
+	spin_lock_init(&pq_lock);
+	// pq_count = 0;
+	printk("Initalize postpone queue spin lock and counter\n");
+
 #ifdef CONFIG_SMP
 	open_softirq(SCHED_SOFTIRQ, run_rebalance_domains);
 
