@@ -2691,6 +2691,12 @@ static void __sched_fork(unsigned long clone_flags, struct task_struct *p)
 	p->se.vruntime			= 0;
 	INIT_LIST_HEAD(&p->se.group_node);
 
+	/* Initialize variables defined at include/linux/sched.h 
+	 * for cfs scheduler. 
+	 */
+	p->se.mem_intense 		= 0;
+	p->se.delay_time 		= 0;
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	p->se.cfs_rq			= NULL;
 #endif

@@ -458,6 +458,13 @@ struct sched_entity {
 
 	struct sched_statistics		statistics;
 
+	/* 
+	 * Add 'mem_intense' feature to distinguish whether
+	 * a process is memory intensive or not.
+	 */
+	unsigned int			mem_intense;
+	u64						delay_time;
+
 #ifdef CONFIG_FAIR_GROUP_SCHED
 	int				depth;
 	struct sched_entity		*parent;
