@@ -6856,10 +6856,17 @@ simple:
 	 */
 	if (prev && prev->mm) { // && (prev->policy == SCHED_NORMAL || prev->policy == SCHED_BATCH))
 		// trace_printk("%lu pages\n", get_mm_rss(prev->mm));
+		/*
 		if (get_mm_rss(prev->mm) < 15000)
 			prev->se.mem_intense = 0;
 		else
-			prev->se.mem_intense = 1;	
+			prev->se.mem_intense = 1;
+		*/
+		threshold = 10;
+		if (prev->mm->page_fault_count < threshold)
+			prev->se.mem_intense = 0;
+		else
+			prev->se.mem_intense = 1;
  	}
 	// trace_printk("%u\n", se->on_rq); -> all 0
 	// trace_printk("%lu\n", p->state); -> 0 or 512
@@ -6900,6 +6907,9 @@ simple:
 			spin_lock_irqsave(&pq_lock, pq_lock_flags);
 			if (non_mp_se) {
 				struct sched_entity *pse = &prev->se;	
+				// pse->delay_time = non_mp_se->vruntime - pse->vruntime;
+				// trace_printk("delay time: %llu\n", pse->delay_time);
+				
 				dequeue_entity(cfs_rq, pse, DEQUEUE_SLEEP);
 
 				update_curr(cfs_rq);
@@ -6923,11 +6933,35 @@ simple:
 				}
 				// trace_printk("cfs_rq: %p, deq_addr: %p\n", cfs_rq, pq_se);
 				// trace_printk("Reorder memory intensive process.\n");
+				
+				/* Link prefetching list to previous non-memory intensive process */
+				// trace_printk("%p\n", &prev->mm->recst_list_head);
+				// task_of(non_mp_se)->mm->prefetch_list_head = &prev->mm->recst_list_head;
 
 				/* Set non_mp_se to NULL to avoid two mp entered consecutively. */
 				non_mp_se = NULL;
 			}
 			spin_unlock_irqrestore(&pq_lock, pq_lock_flags);
+		}
+
+		/* The trace shows common process, can work */
+		// if (!list_empty(&prev->mm->recst_list_head))
+		// 	trace_printk("%p\n", &prev->mm->recst_list_head);
+		
+		/* 
+		 * Need to check empty first, otherwise entry->page
+		 * might be undefine in the head.
+		 */
+		// if (!list_empty(&prev->mm->recst_list_head)) {
+		// 	struct recst_list_node *entry, *n;
+		// 	list_for_each_entry_safe(entry, n, &prev->mm->recst_list_head, list) {
+		// 		trace_printk("hi\n");
+		// 		// trace_printk("address of pages: %p\n", entry->page);
+		// 	}
+		// }
+		if (prev->mm && prev->mm->page_fault_count != 0) {
+			trace_printk("# of page fault during last exec: %u\n", prev->mm->page_fault_count);
+			prev->mm->page_fault_count = 0;
 		}
 	}
 remain:	
@@ -10601,7 +10635,7 @@ __init void init_sched_fair_class(void)
 {
 	spin_lock_init(&pq_lock);
 	// pq_count = 0;
-	printk("Initalize postpone queue spin lock and counter\n");
+	printk("Initialize postpone queue spin lock and counter\n");
 
 #ifdef CONFIG_SMP
 	open_softirq(SCHED_SOFTIRQ, run_rebalance_domains);
