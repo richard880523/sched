@@ -81,6 +81,7 @@
 #include <asm/pgtable.h>
 
 #include "internal.h"
+// #include "vmscan.c"
 
 #if defined(LAST_CPUPID_NOT_IN_PAGE_FLAGS) && !defined(CONFIG_COMPILE_TEST)
 #warning Unfortunate NUMA and NUMA Balancing config, growing page-frame for last_cpupid.
@@ -2788,6 +2789,11 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 			anon_vma_interval_tree_foreach(avc, &anon_vma->rb_root, pgoff_start, pgoff_end) {
 				struct vm_area_struct *vma = avc->vma;
 				unsigned long address = vma_address(page, vma);
+				struct recst_list_node *recst_page;
+				// struct scan_control *sc;
+				int is_locked = 0;
+				struct mem_cgroup *memcg;
+				unsigned long *vm_flags;
 
 				// Skip if address of the page is not inside vma address
 				if (address < vma->vm_start || address >= vma->vm_end)
@@ -2796,17 +2802,18 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 				
 				/* vm_mm refers to the mm where vma belongs */
 				vma->vm_mm->page_fault_count++;
-				struct recst_list_node *recst_page = kzalloc(sizeof(struct recst_list_node), GFP_KERNEL);
-				recst_page->page = page;
+				recst_page = kzalloc(sizeof(struct recst_list_node), GFP_KERNEL);
+				recst_page->vmf = vmf;
 
 				spin_lock_irqsave(&vma->vm_mm->recst_lock, vma->vm_mm->recst_lock_flags);
-				// TODO
 				/*
-				if (page_check_references(page, )) {
-					// add to p->inactive_list->pg_head;
+				if (page_referenced(vmf->page, is_locked, memcg, vm_flags)) { // page_check_references(page, sc)
+					// Add to p->inactive_list->pg_head
+					// trace_printk("%p\n", &vma->vm_mm->recst_list_head);
+					list_add_tail(&recst_page->list, &vma->vm_mm->recst_list_head);
 				}
 				else {
-					// add to p->reconstruct_list;
+					// Add to p->reconstruct_list instead
 				}
 				*/
 				// trace_printk("%p\n", &vma->vm_mm->recst_list_head);
@@ -2831,15 +2838,15 @@ vm_fault_t do_swap_page(struct vm_fault *vmf)
 			page = alloc_page_vma(GFP_HIGHUSER_MOVABLE, vma,
 							vmf->address);
 			if (page) {
+				struct anon_vma *anon_vma;
+				struct anon_vma_chain *avc;
+				pgoff_t pgoff_start, pgoff_end;
+
 				__SetPageLocked(page);
 				__SetPageSwapBacked(page);
 				set_page_private(page, entry.val);
 				lru_cache_add_anon(page);
 				swap_readpage(page, true);
-
-				struct anon_vma *anon_vma;
-				struct anon_vma_chain *avc;
-				pgoff_t pgoff_start, pgoff_end;
 
 				anon_vma = page_anon_vma(page);
 				if (anon_vma) {

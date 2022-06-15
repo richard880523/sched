@@ -368,7 +368,7 @@ struct core_state {
 
 struct kioctx_table;
 struct recst_list_node {
-	struct page *page;
+	struct vm_fault *vmf;
 	struct list_head list;
 };
 

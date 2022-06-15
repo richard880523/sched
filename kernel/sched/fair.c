@@ -28,6 +28,7 @@
  * Define a postpone queue for memory intensive process
  * in cfs scheduler using linux/list.h data structure
  */
+#include "../mm/internal.h"
 #include <linux/spinlock.h>
 #include <linux/list.h>
 
@@ -6902,6 +6903,21 @@ simple:
 
 			// trace_printk("enq_cfs_rq: %p\n", cfs_rq_of(se));
 			// trace_printk("enq_addr: %p\n", &prev->se);
+			
+			/* Prefetch mp pages */
+			if (prev->mm->prefetch_list_head && !list_empty(prev->mm->prefetch_list_head)) {
+				struct recst_list_node *entry, *n;
+				unsigned int cnt = 0;
+				list_for_each_entry_safe(entry, n, prev->mm->prefetch_list_head, list) {
+					if (!pte_present(entry->vmf->orig_pte)) {
+						/* TODO */
+						// ret = do_swap_page(entry->vmf);
+						cnt++;
+					}
+					// if (cnt > threshold) break;
+				}
+				trace_printk("Prefetch %u pages\n", cnt);
+			}
 		} else {
 			/* For memory intensive process */
 			spin_lock_irqsave(&pq_lock, pq_lock_flags);
@@ -6934,9 +6950,9 @@ simple:
 				// trace_printk("cfs_rq: %p, deq_addr: %p\n", cfs_rq, pq_se);
 				// trace_printk("Reorder memory intensive process.\n");
 				
-				/* Link prefetching list to previous non-memory intensive process */
+				/* Link prefetching list to previous non-memory intensive process. */
 				// trace_printk("%p\n", &prev->mm->recst_list_head);
-				// task_of(non_mp_se)->mm->prefetch_list_head = &prev->mm->recst_list_head;
+				task_of(non_mp_se)->mm->prefetch_list_head = &prev->mm->recst_list_head;
 
 				/* Set non_mp_se to NULL to avoid two mp entered consecutively. */
 				non_mp_se = NULL;
